@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>市町村制覇（都道府県連動版）</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #f4f4f9; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 700px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h1 { font-size: 22px; text-align: center; color: #2c3e50; }
+        .account-box { background: #fff3cd; border-left: 5px solid #ffc107; padding: 12px; margin-bottom: 15px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .score-box { background: #e8f4fd; border-left: 5px solid #3498db; padding: 15px; margin-bottom: 20px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .btn { display: block; width: 100%; background: #27ae60; color: white; border: none; padding: 14px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; text-align: center; margin-bottom: 15px; }
+        .btn:active { background: #219653; }
+        #status { text-align: center; margin-bottom: 15px; font-weight: bold; color: #e67e22; font-size: 14px; }
+        #map { width: 100%; height: 400px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .prefecture-list { max-height: 280px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 6px; background: #fafafa; }
+        .prefecture-item { display: flex; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 14px; align-items: center; }
+        .prefecture-item:last-child { border-bottom: none; }
+        select, input { padding: 6px 10px; font-size: 14px; border-radius: 4px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>市町村制覇</h1>
+
+    <!-- アカウント管理エリア -->
+    <div class="account-box">
+        <div>
+            <strong>現在のユーザー:</strong> <span id="current-user-display" style="color: #d35400; font-weight: bold;"></span>
+        </div>
+        <div>
+            <select id="account-select" onchange="switchAccount()">
+                <!-- JavaScriptでアカウント一覧を動的に生成 -->
+            </select>
+            <button onclick="createNewAccount()" style="padding: 6px 10px; cursor: pointer;">新規作成</button>
+            <button onclick="resetCurrentAccountData()" style="padding: 6px 10px; cursor: pointer; background: #e74c3c; color: white; border: none; margin-left: 5px;">データ全消去</button>
+        </div>
+    </div>
+    
+    <div class="score-box">
+        <div>
+            <p style="margin: 0 0 5px 0;"><strong>総目標点数:</strong> <span id="max-score">0</span>点</p>
+            <p style="margin: 0;"><strong>獲得合計点数:</strong> <span id="visited-count">0</span> 点</p>
+        </div>
+        <div style="font-size: 20px; font-weight: bold; color: #3498db;" id="achievement-rate">0%</div>
+    </div>
+
+    <button class="btn" onclick="checkIn()">現在地でチェックインする</button>
+    <div id="status">ボタンを押して現在地を取得してください</div>
+
+    <div id="map"></div>
+
+    <h3 style="font-size: 16px; margin-bottom: 8px;">都道府県別 獲得ポイント・制覇率</h3>
+    <div class="prefecture-list" id="pref-list"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script src="japan_data.js"></script>
+<script>
+    const prefData = [
+        { name: "北海道", total: 582 },
+        { name: "青森県", total: 40 * 3 },
+        { name: "岩手県", total: 33 * 3 },
+        { name: "宮城県", total: 117 },
+        { name: "秋田県", total: 25 * 3 },
+        { name: "山形県", total: 35 * 3 },
+        { name: "福島県", total: 59 * 3 },
+        { name: "茨城県", total: 44 * 3 },
+        { name: "栃木県", total: 25 * 3 },
+        { name: "群馬県", total: 35 * 3 },
+        { name: "埼玉県", total: 216 },
+        { name: "千葉県", total: (54 * 3) + 18 },
+        { name: "東京都", total: 189 },
+        { name: "神奈川県", total: 174 },
+        { name: "新潟県", total: 111 },
+        { name: "富山県", total: 15 * 3 },
+        { name: "石川県", total: 19 * 3 },
+        { name: "福井県", total: 17 * 3 },
+        { name: "山梨県", total: 27 * 3 },
+        { name: "長野県", total: 77 * 3 },
+        { name: "岐阜県", total: 42 * 3 },
+        { name: "静岡県", total: 129 },
+        { name: "愛知県", total: 210 },
+        { name: "三重県", total: 29 * 3 },
+        { name: "滋賀県", total: 19 * 3 },
+        { name: "京都府", total: 108 },
+        { name: "大阪府", total: 216 },
+        { name: "兵庫県", total: 147 },
+        { name: "奈良県", total: 39 * 3 },
+        { name: "和歌山県", total: 30 * 3 },
+        { name: "鳥取県", total: 19 * 3 },
+        { name: "島根県", total: 19 * 3 },
+        { name: "岡山県", total: 90 },
+        { name: "広島県", total: 90 },
+        { name: "山口県", total: 19 * 3 },
+        { name: "徳島県", total: 24 * 3 },
+        { name: "香川県", total: (16 * 3) + 3 },
+        { name: "愛媛県", total: 20 * 3 },
+        { name: "高知県", total: 34 * 3 },
+        { name: "福岡県", total: 216 },
+        { name: "佐賀県", total: 20 * 3 },
+        { name: "長崎県", total: 21 * 3 },
+        { name: "熊本県", total: 147 },
+        { name: "大分県", total: 18 * 3 },
+        { name: "宮崎県", total: 26 * 3 },
+        { name: "鹿児島県", total: (43 * 3) + 3 },
+        { name: "沖縄県", total: (41 * 3) + 3 }
+    ];
+
+    const absoluteMaxScore = prefData.reduce((sum, p) => sum + p.total, 0);
+    document.getElementById("max-score").innerText = absoluteMaxScore;
+
+    // --- アカウント管理システム（バージョン22） ---
+    const STORAGE_VERSION = 'v22';
+    let accounts = JSON.parse(localStorage.getItem(`municipality_accounts_${STORAGE_VERSION}`) || '["メインユーザー"]');
+    let currentAccount = localStorage.getItem(`municipality_current_account_${STORAGE_VERSION}`) || accounts[0];
+
+    function getStorageKey() {
+        return `municipality_records_${STORAGE_VERSION}_acc_${currentAccount}`;
+    }
+
+    let savedRecords = JSON.parse(localStorage.getItem(getStorageKey()) || '{}');
+
+    function updateAccountUI() {
+        const select = document.getElementById("account-select");
+        select.innerHTML = "";
+        accounts.forEach(acc => {
+            const opt = document.createElement("option");
+            opt.value = acc;
+            opt.innerText = acc;
+            if (acc === currentAccount) opt.selected = true;
+            select.appendChild(opt);
+        });
+        document.getElementById("current-user-display").innerText = currentAccount;
+    }
+
+    function switchAccount() {
+        const select = document.getElementById("account-select");
+        currentAccount = select.value;
+        localStorage.setItem(`municipality_current_account_${STORAGE_VERSION}`, currentAccount);
+        
+        savedRecords = JSON.parse(localStorage.getItem(getStorageKey()) || '{}');
+        
+        updateAccountUI();
+        updateScoreAndList();
+        
+        geoJsonLayer.eachLayer(layer => {
+            const info = layer.featureInfo;
+            const record = savedRecords[info.code] || { count: 0 };
+            layer.setStyle({
+                fillColor: getColor(record.count),
+                fillOpacity: record.count > 0 ? 0.7 : 0.3
+            });
+        });
+    }
+
+    function createNewAccount() {
+        const newName = prompt("新しいアカウント名を入力してください:");
+        if (!newName || newName.trim() === "") return;
+        if (accounts.includes(newName.trim())) {
+            alert("すでに存在するアカウント名です。");
+            return;
+        }
+        accounts.push(newName.trim());
+        localStorage.setItem(`municipality_accounts_${STORAGE_VERSION}`, JSON.stringify(accounts));
+        
+        currentAccount = newName.trim();
+        localStorage.setItem(`municipality_current_account_${STORAGE_VERSION}`, currentAccount);
+        savedRecords = {};
+        
+        updateAccountUI();
+        switchAccount();
+    }
+
+    function resetCurrentAccountData() {
+        if (confirm(`現在のアカウント「${currentAccount}」のチェックインデータをすべて消去しますか？`)) {
+            localStorage.removeItem(getStorageKey());
+            savedRecords = {};
+            updateScoreAndList();
+            
+            geoJsonLayer.eachLayer(layer => {
+                layer.setStyle({
+                    fillColor: getColor(0),
+                    fillOpacity: 0.3,
+                    color: '#888888',
+                    weight: 0.6
+                });
+            });
+
+            document.getElementById("status").innerText = `「${currentAccount}」のデータを消去しました。`;
+        }
+    }
+
+    function getColor(count) {
+        if (count === 1) return '#27ae60'; // 1回目：緑 (1点)
+        if (count === 2) return '#f1c40f'; // 2回目：黄色 (2点)
+        if (count >= 3) return '#e74c3c';  // 3回目以上：赤 (3点)
+        return '#ffffff';                 // 未訪問：白 (0点)
+    }
+
+    function getFeatureCode(properties, index) {
+        const p = properties || {};
+        return p.N03_007 || p.code || p.CODE || p.id || p.ID || `area_${index}`;
+    }
+
+    function getPrefectureName(properties) {
+        const p = properties || {};
+        return p.N03_001 || p.pref || p.PREF || p.KEN_NAME || "";
+    }
+
+    function getMunicipalityName(properties) {
+        const p = properties || {};
+        const city = p.N03_003 || p.city || p.CITY || "";
+        const town = p.N03_004 || p.name || p.NAME || p.S_NAME || p.town || "";
+        let fullName = `${city}${town}`.trim();
+        if (!fullName) {
+            fullName = p.NAME_2 || p.KEN_NAME || p.SI_GUN_NAME || "市区町村";
+        }
+        return fullName;
+    }
+
+    // ★都道府県別の獲得ポイント・制覇率を確実に集計して画面に反映する関数
+    function updateScoreAndList() {
+        const listEl = document.getElementById("pref-list");
+        if (!listEl) return;
+        listEl.innerHTML = "";
+        
+        let totalAcquiredScore = 0;
+
+        prefData.forEach(pref => {
+            let prefScore = 0;
+            
+            // 保存されている全レコードを走査し、この都道府県に属するもののポイント（最大3点）を合算
+            Object.keys(savedRecords).forEach(key => {
+                const record = savedRecords[key];
+                if (record && record.count > 0) {
+                    if (record.prefName === pref.name) {
+                        prefScore += Math.min(record.count, 3);
+                    }
+                }
+            });
+
+            totalAcquiredScore += prefScore;
+            const maxPrefScore = pref.total;
+            const rate = maxPrefScore > 0 ? ((prefScore / maxPrefScore) * 100).toFixed(1) : "0.0";
+
+            const div = document.createElement("div");
+            div.className = "prefecture-item";
+            div.innerHTML = `<span><strong>${pref.name}</strong></span><span>${prefScore} / ${maxPrefScore}点 <span style="color: #2980b9; font-weight: bold; margin-left: 5px;">(${rate}%)</span></span>`;
+            listEl.appendChild(div);
+        });
+
+        document.getElementById("visited-count").innerText = totalAcquiredScore;
+        const totalRate = absoluteMaxScore > 0 ? ((totalAcquiredScore / absoluteMaxScore) * 100).toFixed(1) : "0.0";
+        document.getElementById("achievement-rate").innerText = totalRate + "%";
+    }
+
+    const map = L.map('map').setView([36.2048, 138.2529], 5);
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+        attribution: '&copy; 国土地理院', maxZoom: 18
+    }).addTo(map);
+
+    let geoJsonLayer = null;
+    const featureLayers = [];
+
+    if (typeof japanData !== 'undefined') {
+        geoJsonLayer = L.geoJSON(japanData, {
+            style: (feature) => {
+                const index = featureLayers.length;
+                const code = getFeatureCode(feature.properties, index);
+                const record = savedRecords[code] || { count: 0 };
+                
+                return {
+                    color: "#888888",
+                    weight: 0.6,
+                    fillColor: getColor(record.count),
+                    fillOpacity: record.count > 0 ? 0.7 : 0.3
+                };
+            },
+            onEachFeature: (feature, layer) => {
+                const p = feature.properties || {};
+                const pref = getPrefectureName(p);
+                const muniName = getMunicipalityName(p);
+                const code = getFeatureCode(p, featureLayers.length);
+                
+                layer.featureInfo = { pref, code, name: muniName };
+                layer.bindPopup(`${pref} ${muniName}`);
+                
+                featureLayers.push({
+                    feature: feature,
+                    layer: layer,
+                    prefName: pref,
+                    code: code,
+                    name: muniName
+                });
+            }
+        }).addTo(map);
+    }
+
+    // 初期化実行
+    updateAccountUI();
+    updateScoreAndList();
+
+    function checkIn() {
+        const statusEl = document.getElementById("status");
+        if (!navigator.geolocation) {
+            statusEl.innerText = "お使いのブラウザは位置情報に対応していません";
+            return;
+        }
+
+        statusEl.innerText = "現在地を取得中...";
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                statusEl.innerText = `位置取得成功！ (緯度: ${lat.toFixed(4)}, 経度: ${lng.toFixed(4)})`;
+
+                map.setView([lat, lng], 11);
+                L.marker([lat, lng]).addTo(map).bindPopup("現在地").openPopup();
+
+                const point = turf.point([lng, lat]);
+                let foundItem = null;
+
+                featureLayers.forEach(item => {
+                    try {
+                        if (turf.booleanPointInPolygon(point, item.feature)) {
+                            foundItem = item;
+                        }
+                    } catch (e) {}
+                });
+
+                if (!foundItem) {
+                    statusEl.innerText = `位置は取得できましたが、該当する市町村ポリゴンが見つかりませんでした`;
+                    return;
+                }
+
+                const today = new Date().toISOString().split('T')[0];
+                
+                if (!savedRecords[foundItem.code]) {
+                    savedRecords[foundItem.code] = { count: 0, lastDate: "", prefName: foundItem.prefName };
+                }
+
+                // 1日1回制限
+                if (savedRecords[foundItem.code].lastDate === today) {
+                    statusEl.innerText = `【本日のチェックイン済み】[${currentAccount}] ${foundItem.prefName} ${foundItem.name}には本日すでにチェックインしています。`;
+                    return;
+                }
+
+                // 回数を増やす（最大3回まで）
+                if (savedRecords[foundItem.code].count < 3) {
+                    savedRecords[foundItem.code].count += 1;
+                }
+                savedRecords[foundItem.code].lastDate = today;
+                savedRecords[foundItem.code].prefName = foundItem.prefName;
+
+                // アカウント別のストレージへ保存
+                localStorage.setItem(getStorageKey(), JSON.stringify(savedRecords));
+
+                // スタイルの更新
+                const newCount = savedRecords[foundItem.code].count;
+                foundItem.layer.setStyle({
+                    fillColor: getColor(newCount),
+                    fillOpacity: 0.7,
+                    color: '#333333',
+                    weight: 1
+                });
+                foundItem.layer.openPopup();
+
+                // ★都道府県別リストと合計獲得点数を確実に更新
+                updateScoreAndList();
+
+                statusEl.innerText = `[${currentAccount}] チェックイン成功！：${foundItem.prefName} ${foundItem.name}（訪問 ${newCount} 回目 / 獲得 ${newCount}点）`;
+            },
+            (err) => { 
+                statusEl.innerText = "位置情報の取得に失敗しました: " + err.message; 
+            },
+            { enableHighAccuracy: true }
+        );
+    }
+</script>
+</body>
+</html>
